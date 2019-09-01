@@ -7,16 +7,28 @@ using System.Runtime.InteropServices;
 using System.Text;
 using TPSVO.Engine;
 
-namespace TPSVO
+namespace TPSVO.Rendering
 {
     public class Renderer
     {
         private int mRenderProgramId;
         private int mComputeProgramId;
-        private int mHeight;
-        private int mWidth;
+        private int height;
+        private int width;
+        private int ssbo;
+        private int details = 10;
         private static Renderer instance;
         private List<VoxelData> voxels = new List<VoxelData>();
+        private Camera camera;
+
+        public Camera Camera
+        {
+            get
+            {
+                return camera;
+            }
+        }
+
 
         private Renderer()
         {
@@ -35,44 +47,51 @@ namespace TPSVO
             }
         }
 
+        public List<VoxelData> Voxels { get => voxels;}
+        public int Details { get => details; set => details = value; }
+
         public void Initialize(int width, int height)
         {
             Random r = new Random();
-            for (int i = 0; i < 100; i++)
-            {
-                Vector3 pos = new Vector3((float)r.Next(-10, 10), (float)r.Next(0, 20), (float)r.Next(-10, 10));
-                Vector3 color = new Vector3((float)r.NextDouble(), (float)r.NextDouble(), (float)r.NextDouble());
-                VoxelData data = new VoxelData(pos, 0, 0, 1, color);
-                voxels.Add(data);
-            }
-            for (int i = 0; i < 100; i++)
-            {
-                Vector3 pos = new Vector3(-10 + i % 10, 0, -5 + i / 10);
-                Vector3 color = new Vector3((float)r.NextDouble(), (float)r.NextDouble(), (float)r.NextDouble());
-                VoxelData data = new VoxelData(pos, (float)r.NextDouble(), 0, 1, new Vector3(0.5f));
-                voxels.Add(data);
-            }
-            this.mWidth = width;
-            this.mHeight = height;
+            
+            this.camera = new Camera(new Vector3(0f, 0, 0));
+            this.width = width;
+            this.height = height;
             int texHandle = GenerateDestTex();
             mRenderProgramId = SetupRenderProgram();
             mComputeProgramId = SetupComputeProgram();
         }
 
-        public void Update(int frame)
+        private float ConvertToRadians(float angle)
+        {
+            return (float)((Math.PI / 180) * angle);
+        }
+
+        public void Update()
         {
             GL.UseProgram(mComputeProgramId);
-            GL.Uniform1(GL.GetUniformLocation(mComputeProgramId, "roll"), (float)frame * 0.005f);
-            //Console.WriteLine((-20 + (frame * 0.01f) )+ "");
-            GL.DispatchCompute(mWidth / 16, mHeight / 16, 1); // width * height threads in blocks of 16^2
-                                                              //checkErrors("Dispatch compute shader");
+            GL.Uniform1(GL.GetUniformLocation(mComputeProgramId, "voxels"), voxels.Count);
+            GL.Uniform3(GL.GetUniformLocation(mComputeProgramId, "position"), camera.Position);
+            GL.Uniform1(GL.GetUniformLocation(mComputeProgramId, "pitch"), ConvertToRadians(camera.Pitch));
+            GL.Uniform1(GL.GetUniformLocation(mComputeProgramId, "yaw"), ConvertToRadians(camera.Yaw));
+            GL.Uniform1(GL.GetUniformLocation(mComputeProgramId, "details"), details);
+            GL.DispatchCompute(width / 16, height / 16, 1);
+        }
+
+        public void UpdateBuffer()
+        {
+            GL.BindBuffer(BufferTarget.ShaderStorageBuffer, ssbo);
+            GL.BufferData(BufferTarget.ShaderStorageBuffer, Marshal.SizeOf(typeof(VoxelData)) * voxels.Count, voxels.ToArray(), BufferUsageHint.StaticRead);
+            Console.WriteLine(Marshal.SizeOf(typeof(VoxelData)));
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, ssbo);
+            GL.BindBuffer(BufferTarget.ShaderStorageBuffer, 0); // unbind
         }
 
         public void Draw()
         {
+            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             GL.UseProgram(mRenderProgramId);
             GL.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
-            //checkErrors("Draw screen");
         }
 
         private int SetupRenderProgram()
@@ -159,7 +178,7 @@ namespace TPSVO
             GL.BindTexture(TextureTarget.Texture2D, texHandle);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)All.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)All.Linear);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16, mWidth, mHeight, 0, PixelFormat.Rgba, PixelType.Float, IntPtr.Zero);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16, width, height, 0, PixelFormat.Rgba, PixelType.Float, IntPtr.Zero);
 
             // Because we're also using this tex as an image (in order to write to it),
             // we bind it to an image unit as well
@@ -198,11 +217,10 @@ namespace TPSVO
                 Console.WriteLine(GL.GetProgramInfoLog(progHandle));
             }
 
-            int ssbo;
             ssbo = GL.GenBuffer();
+
             GL.BindBuffer(BufferTarget.ShaderStorageBuffer, ssbo);
             GL.BufferData(BufferTarget.ShaderStorageBuffer, Marshal.SizeOf(typeof(VoxelData)) * voxels.Count, voxels.ToArray(), BufferUsageHint.StaticRead);
-            Console.WriteLine(Marshal.SizeOf(typeof(VoxelData)));
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, ssbo);
             GL.BindBuffer(BufferTarget.ShaderStorageBuffer, 0); // unbind
 
